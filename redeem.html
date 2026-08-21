@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<!--
+  Minimal redemption page.
+  Reached via the link emailed to the user: /redeem.html?issuanceCode=...
+
+  Wires HID's vendor scripts (apple.js, custom.min.js — copied as-is from
+  the SDK zip, do not modify) to this Flask backend's endpoints:
+    GET  /origo/webpush/get-details
+    POST /origo/webpush/v2/platforms
+    POST /origo/webpush/v2/provision
+
+  Serve this from Flask (see app.py's static_folder) or any static host.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Add your pass to your wallet</title>
+  <style>
+    body {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+      text-align: center;
+    }
+    #qrContainer, #wallet-buttons { margin-top: 20px; }
+    #qrCanvas { display: block; margin: 0 auto; }
+    button { font-size: 16px; padding: 10px 20px; margin: 6px; cursor: pointer; }
+  </style>
+  <script src="/static/apple.js"></script>
+  <script src="/static/custom.min.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+</head>
+<body>
+  <h2>Add your pass to your wallet</h2>
+  <p id="status">Loading...</p>
+
+  <div id="wallet-buttons" style="display:none;">
+    <button id="googleBtn" style="display:none;">Add to Google Wallet</button>
+    <button id="addPasses" style="display:none;">Add to Apple Wallet</button>
+  </div>
+
+  <div id="qrContainer" style="display:none;">
+    <p>Scan this QR code with your phone:</p>
+    <canvas id="qrCanvas"></canvas>
+    <p style="font-size:12px; word-break:break-all;">
+      Or open directly: <a id="qrLink" href="#" target="_blank"></a>
+    </p>
+  </div>
+
+  <script>
+    const API_BASE = ""; // same-origin; set to your Flask host if hosted separately
+
+    function getIssuanceCode() {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get("issuanceCode");
+      if (!code) {
+        document.getElementById("status").innerText = "Missing issuanceCode in link.";
+        throw new Error("missing issuanceCode");
+      }
+      return atob(code); // decoded issuanceToken, same as RedeemComponent.tsx
+    }
+
+    function isAndroid() {
+      return /android/i.test(navigator.userAgent);
+    }
+
+    async function loadAppDetails() {
+      const res = await fetch(`${API_BASE}/origo/webpush/get-details`);
+      const data = await res.json();
+      // custom.min.js reads these back out of sessionStorage
+      sessionStorage.setItem("google-clientId", data.google.clientId);
+      sessionStorage.setItem("google-clientSecret", data.google.clientSecret);
+      sessionStorage.setItem("google-redirectUrl", data.google.redirectUrl);
+      sessionStorage.setItem("applicationId", data.applicationId);
+      sessionStorage.setItem("appEnv", data.profile);
+      return data;
+    }
+
+    async function loadPlatforms(issuanceToken) {
+      const res = await fetch(`${API_BASE}/origo/webpush/v2/platforms`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ issuanceToken }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return { error: `HTTP ${res.status}: ${data.error || res.statusText}` };
+      }
+      return data; // { supportedServiceList: [...] }
+    }
+
+    function showQrCode(url) {
+      document.getElementById("wallet-buttons").style.display = "none";
+      document.getElementById("qrContainer").style.display = "block";
+
+      // Set the real link FIRST, unconditionally — so even if the QR
+      // library fails to load, the actual save URL is always visible
+      // instead of a stale placeholder.
+      const link = document.getElementById("qrLink");
+      link.href = url;
+      link.innerText = url;
+      console.log("Google Wallet save URL length:", url.length, url);
+
+      try {
+        if (typeof QRCode === "undefined") {
+          throw new Error("QR library failed to load (check network/CDN access to jsdelivr.net)");
+        }
+        const canvas = document.getElementById("qrCanvas");
+        QRCode.toCanvas(canvas, url, { width: 500, margin: 2, errorCorrectionLevel: "L" }, (err) => {
+          if (err) {
+            console.error(err);
+            document.getElementById("status").innerText =
+              "QR render failed (use the link below instead): " + err.message;
+          }
+        });
+      } catch (e) {
+        console.error(e);
+        document.getElementById("status").innerText =
+          "QR render failed (use the link below instead): " + e.message;
+      }
+    }
+
+    function handleGoogleClick(issuanceToken) {
+      const clientId = sessionStorage.getItem("google-clientId");
+
+      // Real Google sign-in, using Google's own Identity Services library.
+      // flow: 'auth-code' matches what custom.min.js's invokeGoogleWallet expects.
+      // NOTE: redirect_uri is intentionally omitted — it's only used/required
+      // when ux_mode is 'redirect'. In 'popup' mode the code comes back via
+      // the callback below, no page navigation happens, so there's no
+      // callback URL to register or match.
+      const codeClient = google.accounts.oauth2.initCodeClient({
+        client_id: clientId,
+        scope: "openid email profile",
+        ux_mode: "popup",
+        callback: async (response) => {
+          if (!response || !response.code) {
+            document.getElementById("status").innerText = "Google sign-in failed.";
+            return;
+          }
+          await finishGoogleProvisioning(issuanceToken, response.code);
+        },
+      });
+      codeClient.requestCode();
+    }
+
+    async function finishGoogleProvisioning(issuanceToken, code) {
+      // invokeGoogleWallet is defined inside custom.min.js. It exchanges the
+      // code for tokens itself and resolves with { id_token, access_token }.
+      const googleCreds = await window.invokeGoogleWallet(code);
+      if (!googleCreds || !googleCreds.id_token) {
+        document.getElementById("status").innerText = "Google sign-in failed.";
+        return;
+      }
+
+      const res = await fetch(`${API_BASE}/origo/webpush/v2/provision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          issuanceToken: issuanceToken,
+          walletType: "GOOGLE_WALLET",
+          googleWallet: {
+            idToken: googleCreds.id_token,
+            accessToken: googleCreds.access_token,
+          },
+        }),
+      });
+      const data = await res.json();
+      const blob = data && data.provisioningData && data.provisioningData.googleWallet
+        ? data.provisioningData.googleWallet.blob
+        : null;
+      if (!blob) {
+        document.getElementById("status").innerText = "Provisioning failed.";
+        return;
+      }
+      const saveUrl = `https://pay.google.com/gp/t/savecard/${blob}?provisioning_source=web`;
+      if (isAndroid()) {
+        window.location.href = saveUrl;
+      } else {
+        showQrCode(saveUrl);
+      }
+    }
+
+    function handleAppleClick(issuanceToken) {
+      const env = sessionStorage.getItem("appEnv");
+      const applicationId = sessionStorage.getItem("applicationId");
+      const provisioningApiUrl = `${API_BASE}/origo/webpush/v2/provision`;
+
+      // invokeAppleWallet is defined inside custom.min.js and internally
+      // calls this like the real axios library — response body must be
+      // wrapped in a "data" property to match axios's response shape.
+      window.invokeAppleWallet(env, issuanceToken, applicationId, provisioningApiUrl, {
+        post: (url, body) =>
+          fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          })
+            .then((r) => r.json())
+            .then((data) => ({ data: data })),
+      });
+    }
+
+    (async function init() {
+      try {
+        const issuanceToken = getIssuanceCode();
+        document.getElementById("status").innerText = "Loading app details...";
+        await loadAppDetails();
+
+        document.getElementById("status").innerText = "Checking supported wallets...";
+        const platformResp = await loadPlatforms(issuanceToken);
+
+        const supportedServices = platformResp && platformResp.supportedServiceList;
+        if (!supportedServices) {
+          document.getElementById("status").innerText =
+            "Error: " + (platformResp && (platformResp.error || JSON.stringify(platformResp)));
+          return;
+        }
+
+        document.getElementById("status").innerText = "Choose a wallet:";
+        document.getElementById("wallet-buttons").style.display = "block";
+
+        if (supportedServices.includes("GOOGLE_WALLET")) {
+          const btn = document.getElementById("googleBtn");
+          btn.style.display = "inline-block";
+          btn.onclick = () => handleGoogleClick(issuanceToken);
+        }
+        if (supportedServices.includes("APPLE_WALLET")) {
+          const btn = document.getElementById("addPasses");
+          btn.style.display = "inline-block";
+          btn.onclick = () => handleAppleClick(issuanceToken);
+        }
+      } catch (e) {
+        console.error(e);
+        document.getElementById("status").innerText = "Error: " + e.message;
+      }
+    })();
+  </script>
+</body>
+</html>

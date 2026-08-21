@@ -1,0 +1,50 @@
+Flask==3.0.3
+requests==2.32.3
+python-dotenv==1.0.1
+gunicorn==22.0.0
+
+
+
+# import json
+# import logging
+
+# logger = logging.getLogger(__name__)
+# @app.route("/admin/passes", methods=["POST", "GET"])
+# def create_pass_and_email():
+#     body = request.json  # {"userId": "...", "passTemplateId": "...", "email": "..."}
+#     user_id = body["userId"]
+#     pass_template_id = body["passTemplateId"]
+#     recipient_email = body["email"]
+
+#     resp = requests.post(
+#         f"{CREDENTIAL_MGMT_URL}/organization/{ORGANIZATION_ID}/pass",
+#         headers=origo_auth_headers(CONTENT_TYPE_CM),
+#         json={"passTemplateId": pass_template_id, "userId": user_id},
+#         timeout=10,
+#     )
+#     resp.raise_for_status()
+#     data = resp.json()
+
+#     # TEMP: log the raw response so we can see the real shape of issuanceToken
+#     logger.info("credential-mgmt response: %s", data)
+
+#     issuance_token = data["issuanceToken"]
+
+#     # Handle both possible shapes: plain string, or dict/object
+#     if isinstance(issuance_token, dict):
+#         # Adjust "token" to whatever key actually holds the string once you see the logs
+#         token_str = issuance_token.get("token")
+#         if token_str is None:
+#             # fallback: encode the whole object as JSON
+#             token_str = json.dumps(issuance_token)
+#     elif isinstance(issuance_token, str):
+#         token_str = issuance_token
+#     else:
+#         token_str = str(issuance_token)
+
+#     issuance_code = base64.b64encode(token_str.encode()).decode()
+#     redeem_link = f"{FRONTEND_BASE_URL}/redeem.html?issuanceCode={issuance_code}"
+
+#     send_redeem_email(recipient_email, redeem_link)
+
+#     return jsonify({"issuanceToken": issuance_token, "redeemLink": redeem_link}), 201
