@@ -97,11 +97,11 @@ GOOGLE_REDIRECT_URL = os.environ["GOOGLE_REDIRECT_URL"]
 FRONTEND_BASE_URL = os.environ.get("FRONTEND_BASE_URL", "https://yourapp.example.com")
 
 # SMTP for sending the redemption email
-SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_HOST = os.environ.get("SMTP_HOST", "Smtp52.mailservice25.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USER = os.environ.get("SMTP_USER", "")
-SMTP_PASS = os.environ.get("SMTP_PASS", "")
-FROM_EMAIL = os.environ.get("FROM_EMAIL", SMTP_USER)
+SMTP_USER = os.environ.get("SMTP_USER", "manjuhr@datalogicsindia.com")
+SMTP_PASS = os.environ.get("SMTP_PASS", "HmanKyu&4")
+FROM_EMAIL = os.environ.get("FROM_EMAIL", "manjuhr@datalogicsindia.com")
 
 ORIGO_WEBHOOK_SECRET = os.environ.get("ORIGO_WEBHOOK_SECRET", "")
 
